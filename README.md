@@ -1,2 +1,1 @@
-# SmsBlocker
-Sms blocker android app
+# My project's README

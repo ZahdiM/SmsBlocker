@@ -1,0 +1,618 @@
+package com.ultimatesmsblocker;
+
+import android.app.Activity;
+import android.content.ContentResolver;
+import android.content.ContentValues;
+import android.database.Cursor;
+import android.net.Uri;
+import android.os.Bundle;
+import android.os.Handler;
+import android.provider.ContactsContract;
+import android.support.v7.app.AppCompatActivity;
+import android.support.v7.widget.LinearLayoutManager;
+import android.support.v7.widget.RecyclerView;
+import android.text.TextUtils;
+import android.view.LayoutInflater;
+import android.view.Menu;
+import android.view.MenuItem;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.EditText;
+import android.widget.LinearLayout;
+import android.widget.TextView;
+import android.widget.Toast;
+
+import com.afollestad.materialdialogs.GravityEnum;
+import com.afollestad.materialdialogs.MaterialDialog;
+
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.List;
+
+import DbHelper;
+import RefreshAdapter;
+import Add_Number_To_Block_Model;
+import Utils;
+
+public class Add_Number_To_Block_Activity extends AppCompatActivity implements RefreshAdapter
+{
+    Activity context;
+    RecyclerView RvMessages;
+    List<Add_Number_To_Block_Model> list;
+    Add_Number_To_Block_Adapter add_number_to_block_adapter;
+    Handler handler;
+    boolean firstTime = true;
+    DbHelper dbHelper;
+    int SelectedIndex = -1;
+    EditText EtNoOfDays;
+    boolean IsLongPressed = false, IsFirstLong = true;
+    int longindex = -1;
+    List<Integer> IndexArray;
+    String name, id, phone, number = "";
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState)
+    {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_add_number_to_block);
+        Init();
+    }
+
+    private void Init()
+    {
+        try
+        {
+            context = Add_Number_To_Block_Activity.this;
+            Sms_Receiver.refreshAdapter= (RefreshAdapter) context;
+            RvMessages = (RecyclerView) findViewById(R.id.RvMessages);
+            dbHelper = new DbHelper(context);
+            list = new ArrayList<Add_Number_To_Block_Model>();
+            add_number_to_block_adapter = new Add_Number_To_Block_Adapter();
+            RvMessages.setLayoutManager(new LinearLayoutManager(context));
+            RvMessages.setAdapter(add_number_to_block_adapter);
+            IndexArray = new ArrayList<>();
+            readContacts();
+            GetInboxMsgs();
+//            if (!firstTime)
+//            {
+//                handler = new Handler(getMainLooper());
+//                handler.postDelayed(new Runnable()
+//                {
+//                    @Override
+//                    public void run()
+//                    {
+//                        handler.postDelayed(this, 1000);
+//
+//                    }
+//                }, 1000);
+//            }
+        }
+        catch (Exception e)
+        {
+            Toast.makeText(context, "Init Exp\n" + e.getMessage(), Toast.LENGTH_SHORT).show();
+        }
+
+    }
+
+    private void GetInboxMsgs()
+    {
+        Cursor cursor = null;
+        try
+        {
+            cursor = getContentResolver().query(Uri.parse("content://sms/inbox"), null, null, null, null);
+//            cursor.moveToFirst();
+            if (cursor != null && cursor.getCount() > 0)
+            {
+                list.clear();
+                cursor.moveToFirst();
+                dbHelper.DeleteTableData("InboxMessages");
+                while (!cursor.isAfterLast())
+                {
+                    number = cursor.getString(2);
+                    ContentValues contentValues = new ContentValues();
+                    contentValues.put("Message", cursor.getString(13));
+                    contentValues.put("Number", Utils.SetNumberFormat(number));
+                    contentValues.put("Inboxid", dbHelper.GetContactIDFromContacts(number));
+                    if (dbHelper.GetNameFromContacts(number).equals(""))
+                    {
+                        contentValues.put("Name", number);
+                    }
+                    else
+                    {
+                        contentValues.put("Name", dbHelper.GetNameFromContacts(number));
+                    }
+                    if (!dbHelper.InsertData(contentValues, "InboxMessages"))
+                    {
+                        Toast.makeText(context, "Not inserted", Toast.LENGTH_SHORT).show();
+                    }
+//                for (int idx = 0; idx < cursor.getColumnCount(); idx++)
+//                {
+//                    msgData += cursor.getColumnName(idx) + ":" + cursor.getString(idx);
+//                    list.add(new Add_Number_To_Block_Model(cursor.getString(2), cursor.getString(13)));
+//                    msgData += "\n" + cursor.getColumnName(13) + ":" + cursor.getString(13);
+//                }
+                    // use msgData
+//                TvMessage.setText(msgData+"\n\n\n");
+                    cursor.moveToNext();
+                }
+
+                list = dbHelper.GetUniqueNumberMessages();
+                if (list != null && list.size() > 0)
+                {
+                    RvMessages.setAdapter(new Add_Number_To_Block_Adapter());
+                }
+                firstTime = false;
+            }
+        }
+        catch (Exception e)
+        {
+            Toast.makeText(context, "Get Inbox Msgs Exp\n" + e.getMessage(), Toast.LENGTH_SHORT).show();
+        }
+        finally
+        {
+            if (cursor != null)
+            {
+                cursor.close();
+            }
+        }
+    }
+
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu)
+    {
+        // Inflate the menu; this adds items to the action bar if it is present.
+        getMenuInflater().inflate(R.menu.select_all, menu);
+        return super.onCreateOptionsMenu(menu);
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item)
+    {
+        // Handle action bar item clicks here. The action bar will
+        // automatically handle clicks on the Home/Up button, so long
+        // as you specify a parent activity in AndroidManifest.xml.
+        int id = item.getItemId();
+
+        //noinspection SimplifiableIfStatement
+        if (id == R.id.SelectAllMenu)
+        {
+            ConfirmationDialog(1);
+        }
+        else if (id == R.id.AddtoBlockList)
+        {
+            if (SelectedIndex == -1)
+            {
+                Toast.makeText(context, "Please select atleast one message to add in block list", Toast.LENGTH_SHORT).show();
+            }
+            else if (!IsFirstLong)
+            {
+                ConfirmationDialog(2);
+            }
+            else
+            {
+                if (dbHelper.NumberAlreadyExitsInBlockList(list.get(SelectedIndex).getNumber()))
+                {
+                    Toast.makeText(context, "This Phone Number is Already Exist in Blocked List", Toast.LENGTH_SHORT).show();
+                }
+                else
+                {
+                    ConfirmationDialog(2);
+                }
+            }
+        }
+
+        return super.onOptionsItemSelected(item);
+    }
+
+    private void ConfirmationDialog(final int check)
+    {
+        try
+        {
+            View view = LayoutInflater.from(context).inflate(R.layout.getting_number_of_days_dialog, null, false);
+            EtNoOfDays = (EditText) view.findViewById(R.id.EtNoOfDays);
+            EtNoOfDays.setSelectAllOnFocus(true);
+            EtNoOfDays.setOnFocusChangeListener(new View.OnFocusChangeListener()
+            {
+                @Override
+                public void onFocusChange(View v, boolean hasFocus)
+                {
+                    if (hasFocus)
+                    {
+                        ((EditText) v).selectAll();
+                    }
+                }
+            });
+            MaterialDialog.Builder builder = new MaterialDialog.Builder(context);
+            builder.title("Number of Days");
+            builder.titleGravity(GravityEnum.CENTER);
+            builder.cancelable(false);
+            builder.autoDismiss(false);
+            builder.customView(view, false);
+//            builder.backgroundColorRes(R.color.ClrLightOrange);
+//            builder.content("Are you sure you want to add this number to block list?");
+            builder.positiveColor(getResources().getColor(R.color.clrBlack));
+            builder.negativeColor(getResources().getColor(R.color.clrBlack));
+//            builder.contentColorRes(R.color.clrBlack);
+            builder.positiveText("No");
+            builder.negativeText("Yes");
+            builder.callback(new MaterialDialog.ButtonCallback()
+            {
+                @Override
+                public void onPositive(MaterialDialog dialog)
+                {
+                    super.onPositive(dialog);
+                    dialog.dismiss();
+                }
+
+                @Override
+                public void onNegative(MaterialDialog dialog)
+                {
+                    super.onNegative(dialog);
+                    if (TextUtils.isEmpty(EtNoOfDays.getText().toString()))
+                    {
+                        Toast.makeText(context, "Please enter number of Days", Toast.LENGTH_SHORT).show();
+                    }
+                    else
+                    {
+                        if (Integer.parseInt(EtNoOfDays.getText().toString().trim()) >= 1 && Integer.parseInt(EtNoOfDays.getText().toString
+                                ().trim()) <= 1000)
+                        {
+                            if (check == 1)
+                            {
+                                for (int count = 0; count < list.size(); count++)
+                                {
+                                    ContentValues contentValues = new ContentValues();
+                                    contentValues.put("BlockedNumber", list.get(SelectedIndex).getNumber());
+                                    contentValues.put("Blockedid", dbHelper.GetContactIDFromContacts(list.get(SelectedIndex).getNumber()));
+                                    contentValues.put("BlockedName", list.get(SelectedIndex).getName());
+                                    contentValues.put("Date", GetCustomDate("dd-MM-yyyy"));
+                                    contentValues.put("NoOfDays", EtNoOfDays.getText().toString().trim());
+                                    if (!dbHelper.InsertData(contentValues, "BlockList"))
+                                    {
+                                        Toast.makeText(context, "Not added in list", Toast.LENGTH_SHORT).show();
+                                    }
+                                    else
+                                    {
+//                    Toast.makeText(context, "Added in Block List", Toast.LENGTH_SHORT).show();
+                                    }
+                                }
+                            }
+                            else
+                            {
+
+                                if (!IsFirstLong)
+                                {
+                                    for (int j = 0; j < IndexArray.size(); j++)
+                                    {
+                                        if (dbHelper.NumberAlreadyExitsInBlockList(list.get(j).getNumber()))
+                                        {
+//                                        Toast.makeText(context, "This Phone Number is Already Exist in Blocked List", Toast.LENGTH_SHORT).show();
+                                        }
+                                        else
+                                        {
+                                            ContentValues contentValues = new ContentValues();
+                                            contentValues.put("BlockedNumber", list.get(j).getNumber());
+                                            contentValues.put("Blockedid", dbHelper.GetContactIDFromContacts(list.get(j).getNumber()));
+                                            contentValues.put("BlockedName", list.get(j).getName());
+                                            contentValues.put("Date", GetCustomDate("dd-MM-yyyy"));
+                                            contentValues.put("NoOfDays", EtNoOfDays.getText().toString().trim());
+                                            if (!dbHelper.InsertData(contentValues, "BlockList"))
+                                            {
+                                                Toast.makeText(context, "Not added in list", Toast.LENGTH_SHORT).show();
+                                            }
+                                            else
+                                            {
+//                                            Toast.makeText(context, "Added in Block List", Toast.LENGTH_SHORT).show();
+                                            }
+                                        }
+                                    }
+                                }
+                                else
+                                {
+                                    ContentValues contentValues = new ContentValues();
+                                    contentValues.put("BlockedNumber", list.get(SelectedIndex).getNumber());
+                                    contentValues.put("Blockedid", dbHelper.GetContactIDFromContacts(list.get(SelectedIndex).getNumber()));
+                                    contentValues.put("BlockedName", list.get(SelectedIndex).getName());
+                                    contentValues.put("Date", GetCustomDate("dd-MM-yyyy"));
+                                    contentValues.put("NoOfDays", EtNoOfDays.getText().toString().trim());
+                                    if (!dbHelper.InsertData(contentValues, "BlockList"))
+                                    {
+                                        Toast.makeText(context, "Not added in list", Toast.LENGTH_SHORT).show();
+                                    }
+                                    else
+                                    {
+                                        Toast.makeText(context, "Added in Block List", Toast.LENGTH_SHORT).show();
+                                    }
+                                }
+                            }
+                            dialog.dismiss();
+                        }
+                        else
+                        {
+                            Toast.makeText(context, "Please enter number of days in range 1 to 1000", Toast.LENGTH_SHORT).show();
+                        }
+                    }
+                }
+            });
+            builder.build();
+            builder.show();
+        }
+        catch (Exception e)
+        {
+            Toast.makeText(context, "Exp:\n" + e.getMessage(), Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    public void readContacts()
+    {
+        Cursor cur = null, pCur = null;
+        try
+        {
+//        grantUriPermission();
+//        StringBuffer sb = new StringBuffer();
+//        sb.append("......Contact Details.....");
+            ContentResolver cr = getContentResolver();
+            cur = cr.query(ContactsContract.Contacts.CONTENT_URI, null, null, null, null);
+//        String emailContact = null;
+//        String emailType = null;
+//        String image_uri = "";
+//        Bitmap bitmap = null;
+            if (cur != null && cur.getCount() > 0)
+            {
+                while (cur.moveToNext())
+                {
+                    id = cur.getString(cur
+                            .getColumnIndex(ContactsContract.Contacts._ID));
+                    name = cur
+                            .getString(cur
+                                    .getColumnIndex(ContactsContract.Contacts.DISPLAY_NAME));
+
+//                image_uri = cur
+//                        .getString(cur
+//                                .getColumnIndex(ContactsContract.CommonDataKinds.Phone.PHOTO_URI));
+                    if (Integer
+                            .parseInt(cur.getString(cur
+                                    .getColumnIndex(ContactsContract.Contacts.HAS_PHONE_NUMBER))) > 0)
+                    {
+//                    System.out.println("name : " + name + ", ID : " + id);
+//                    sb.append("\n Contact Name:" + name);
+                        pCur = cr.query(
+                                ContactsContract.CommonDataKinds.Phone.CONTENT_URI, null,
+                                ContactsContract.CommonDataKinds.Phone.CONTACT_ID
+                                        + " = ?", new String[]{id}, null);
+                        if (pCur != null && pCur.getCount() > 0)
+                        {
+                            while (pCur.moveToNext())
+                            {
+                                phone = pCur.getString(pCur.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER));
+//                        sb.append("\n Phone number:" + phone);
+//                        System.out.println("phone" + phone);
+                            }
+                            ContentValues contentValues = new ContentValues();
+                            contentValues.put("ContactId", id);
+                            contentValues.put("PhoneNumber", Utils.SetNumberFormat(phone));
+                            contentValues.put("ContactName", name);
+                            if (!dbHelper.InsertData(contentValues, "ContactsDetail"))
+                            {
+                                Toast.makeText(context, "Contacts Not Inserted", Toast.LENGTH_SHORT).show();
+                            }
+                        }
+//                    Cursor emailCur = cr.query(ContactsContract.CommonDataKinds.Email.CONTENT_URI, null,
+//                            ContactsContract.CommonDataKinds.Email.CONTACT_ID
+//                                    + " = ?", new String[]{id}, null);
+//                    while (emailCur.moveToNext())
+//                    {
+//                        emailContact = emailCur
+//                                .getString(emailCur
+//                                        .getColumnIndex(ContactsContract.CommonDataKinds.Email.DATA));
+//                        emailType = emailCur
+//                                .getString(emailCur
+//                                        .getColumnIndex(ContactsContract.CommonDataKinds.Email.TYPE));
+//                        sb.append("\nEmail:" + emailContact + "Email type:" + emailType);
+//                        System.out.println("Email " + emailContact
+//                                + " Email Type : " + emailType);
+//
+//                    }
+//
+//                    emailCur.close();
+                    }
+
+//                if (image_uri != null)
+//                {
+//                    System.out.println(Uri.parse(image_uri));
+//                    try
+//                    {
+//                        bitmap = MediaStore.Images.Media
+//                                .getBitmap(this.getContentResolver(),
+//                                        Uri.parse(image_uri));
+//                        sb.append("\n Image in Bitmap:" + bitmap);
+//                        System.out.println(bitmap);
+//
+//                    }
+//                    catch (FileNotFoundException e)
+//                    {
+//                        // TODO Auto-generated catch block
+//                        e.printStackTrace();
+//                    }
+//                    catch (IOException e)
+//                    {
+//                        // TODO Auto-generated catch block
+//                        e.printStackTrace();
+//                    }
+//
+//                }
+
+
+//                sb.append("\n........................................");
+                }
+            }
+        }
+        catch (Exception e)
+        {
+            Toast.makeText(context, "Exp read contacts\n" + e.getMessage(), Toast.LENGTH_SHORT).show();
+        }
+        finally
+        {
+            if (cur != null)
+            {
+                cur.close();
+            }
+            if (pCur != null)
+            {
+                pCur.close();
+            }
+
+        }
+    }
+
+    public String GetCustomDate(String s)
+    {
+        SimpleDateFormat simpleDateFormat = new SimpleDateFormat(s);
+        return simpleDateFormat.format(Calendar.getInstance().getTime());
+    }
+
+    @Override
+    public void OnRefreshCompleted(List<Add_Number_To_Block_Model> list)
+    {
+        if (add_number_to_block_adapter !=null)
+        {
+            this.list=list;
+            add_number_to_block_adapter.notifyDataSetChanged();
+        }
+    }
+
+    public class Add_Number_To_Block_Adapter extends RecyclerView.Adapter<Add_Number_To_Block_Adapter.ViewHolder>
+    {
+
+        int currentPosition = -1, PreviousPosition = -1;
+
+        @Override
+        public ViewHolder onCreateViewHolder(ViewGroup parent, int viewType)
+        {
+            return new ViewHolder(LayoutInflater.from(context).inflate(R.layout.add_number_to_block_row_items, parent, false));
+        }
+
+        @Override
+        public void onBindViewHolder(ViewHolder holder, int position)
+        {
+            try
+            {
+                if (!list.get(position).getName().equals(""))
+                {
+                    holder.TvNumber.setText(list.get(position).getName());
+                }
+                else
+                {
+                    holder.TvNumber.setText(list.get(position).getNumber());
+                }
+                holder.TvMessage.setText(list.get(position).getMessage());
+                if (!IsLongPressed)
+                {
+                    if (position == PreviousPosition)
+                    {
+                        holder.itemView.setBackgroundResource(0);
+                        PreviousPosition = currentPosition;
+                    }
+                    else
+                    {
+                        holder.itemView.setBackgroundResource(0);
+                    }
+                    if (position == currentPosition)
+                    {
+                        holder.itemView.setBackgroundResource(R.drawable.md_btn_selected_dark);
+                    }
+                    else
+                    {
+                        holder.itemView.setBackgroundResource(0);
+                    }
+                }
+                else if (position == longindex)
+                {
+                    holder.itemView.setBackgroundResource(R.drawable.md_btn_selected_dark);
+                }
+                else
+                {
+                    holder.itemView.setBackgroundResource(0);
+                }
+            }
+            catch (Exception e)
+            {
+                Toast.makeText(context, "on Bind Exp\n" + e.getMessage(), Toast.LENGTH_SHORT).show();
+            }
+        }
+
+        @Override
+        public int getItemCount()
+        {
+            return list.size();
+        }
+
+        public class ViewHolder extends RecyclerView.ViewHolder
+        {
+            TextView TvNumber, TvMessage;
+            LinearLayout linearLayout;
+
+            public ViewHolder(View itemView)
+            {
+                super(itemView);
+                try
+                {
+                    TvNumber = (TextView) itemView.findViewById(R.id.TvNumber);
+                    TvMessage = (TextView) itemView.findViewById(R.id.TvMessage);
+                    linearLayout = (LinearLayout) itemView.findViewById(R.id.linearLayout);
+                    itemView.setOnClickListener(new View.OnClickListener()
+                    {
+                        @Override
+                        public void onClick(View view)
+                        {
+                            SelectedIndex = getAdapterPosition();
+                            if (!IsLongPressed)
+                            {
+                                currentPosition = getAdapterPosition();
+                                if (PreviousPosition == -1)
+                                {
+                                    PreviousPosition = getAdapterPosition();
+                                    linearLayout.setBackgroundResource(R.drawable.md_btn_selected_dark);
+                                }
+                                else if (currentPosition != PreviousPosition)
+                                {
+                                    notifyDataSetChanged();
+                                }
+                            }
+                            else
+                            {
+                                IndexArray.add(getAdapterPosition());
+                                linearLayout.setBackgroundResource(R.drawable.md_btn_selected_dark);
+                            }
+                        }
+                    });
+                    itemView.setOnLongClickListener(new View.OnLongClickListener()
+                    {
+                        @Override
+                        public boolean onLongClick(View view)
+                        {
+                            if (IsFirstLong)
+                            {
+                                IsLongPressed = true;
+                                longindex = getAdapterPosition();
+                                IndexArray.add(getAdapterPosition());
+                                IsFirstLong = false;
+                                notifyDataSetChanged();
+                            }
+                            else
+                            {
+
+                            }
+                            return false;
+                        }
+                    });
+                }
+                catch (Exception e)
+                {
+                    Toast.makeText(context, "View Holder Exp\n" + e.getMessage(), Toast.LENGTH_SHORT).show();
+                }
+            }
+        }
+    }
+}
